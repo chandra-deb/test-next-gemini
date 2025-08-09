@@ -1,5 +1,5 @@
 "use client";
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useMemo } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { SubtitleItem } from "./types";
@@ -13,9 +13,10 @@ export interface SubtitleListProps {
   onReplayLine: (subtitle: SubtitleItem, rate?: number) => void;
   showPinyin?: boolean;
   showMeaning?: boolean;
+  showToneColors?: boolean;
 }
 
-export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTime, onSeek, onReplayLine, showPinyin = true, showMeaning = true }) => {
+export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTime, onSeek, onReplayLine, showPinyin = true, showMeaning = true, showToneColors = true }) => {
   const activeRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -25,6 +26,64 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
   }, [currentTime]);
 
   const isActive = (s: SubtitleItem) => currentTime >= s.startTime && currentTime <= s.endTime;
+
+  // Map accented vowels to tone numbers for detection when tone numbers are not present.
+  const toneMarkMap: Record<string, number> = useMemo(() => ({
+    ā:1, á:2, ǎ:3, à:4,
+    ē:1, é:2, ě:3, è:4,
+    ī:1, í:2, ǐ:3, ì:4,
+    ō:1, ó:2, ǒ:3, ò:4,
+    ū:1, ú:2, ǔ:3, ù:4,
+    ǖ:1, ǘ:2, ǚ:3, ǜ:4,
+    Ā:1, Á:2, Ǎ:3, À:4,
+    Ē:1, É:2, Ě:3, È:4,
+    Ī:1, Í:2, Ǐ:3, Ì:4,
+    Ō:1, Ó:2, Ǒ:3, Ò:4,
+    Ū:1, Ú:2, Ǔ:3, Ù:4,
+    Ǖ:1, Ǘ:2, Ǚ:3, Ǜ:4,
+  }), []);
+
+  const toneForSyllable = (syllable: string): number => {
+    // Strip punctuation commonly appearing in pinyin strings
+    const clean = syllable.replace(/[.,!?;:()\[\]{}“”"'’`]/g, "");
+    // If ends with a digit 1-5 treat that as tone (5 or 0 = neutral)
+    const m = clean.match(/([a-zA-ZüÜvV]+)([1-5])$/);
+    if (m) {
+      const n = parseInt(m[2], 10);
+      return n === 5 ? 0 : n; // treat 5 as neutral
+    }
+    // Otherwise inspect characters for tone marks
+    for (const ch of clean) {
+      if (toneMarkMap[ch] != null) return toneMarkMap[ch];
+    }
+    return 0; // neutral
+  };
+
+  const toneColorClass = (tone: number): string => {
+    switch (tone) {
+      case 1: return "text-blue-600"; // tone 1
+      case 2: return "text-green-600"; // tone 2
+      case 3: return "text-orange-500"; // tone 3
+      case 4: return "text-red-600"; // tone 4
+      default: return "text-slate-400"; // neutral
+    }
+  };
+
+  const renderColoredPinyin = (pinyin: string) => {
+    // Split by whitespace, keep original spacing minimal by joining with single space.
+    const parts = pinyin.trim().split(/\s+/);
+    return parts.map((syll, i) => {
+      if (showToneColors) {
+        const tone = toneForSyllable(syll);
+        return (
+          <span key={i} className={toneColorClass(tone)}>
+            {syll}{i < parts.length - 1 && ' '}
+          </span>
+        );
+      }
+      return <span key={i}>{syll}{i < parts.length - 1 && ' '}</span>;
+    });
+  };
 
   return (
     <ScrollArea className="h-[600px] px-4">
@@ -47,12 +106,18 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
                 </Badge>
                 <div className={`text-sm leading-relaxed flex-1 ${active ? "text-slate-800 font-medium" : "text-slate-600"}`}>
                   <p className="whitespace-pre-wrap break-words">{subtitle.text}</p>
-          {(showPinyin && subtitle.pinyin) || (showMeaning && subtitle.meaning) ? (
-                    <p className="text-[11px] mt-1 text-slate-500">
-            {showPinyin && subtitle.pinyin && <span className="mr-2 font-semibold">{subtitle.pinyin}</span>}
-            {showMeaning && subtitle.meaning}
+                  {(showPinyin && subtitle.pinyin) || (showMeaning && subtitle.meaning) ? (
+                    <p className="text-[11px] mt-1 flex flex-wrap items-baseline gap-1">
+                      {showPinyin && subtitle.pinyin && (
+                        <span className="font-semibold leading-snug">
+                          {renderColoredPinyin(subtitle.pinyin)}
+                        </span>
+                      )}
+                      {showMeaning && subtitle.meaning && (
+                        <span className="text-slate-500">{subtitle.meaning}</span>
+                      )}
                     </p>
-          ) : null}
+                  ) : null}
                   <div className="mt-2 flex gap-1 flex-wrap">
                     <Button
                       variant="outline"

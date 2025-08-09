@@ -47,6 +47,7 @@ const Player = () => {
   const [chunksReceived, setChunksReceived] = useState(0);
   const [showPinyin, setShowPinyin] = useState(true);
   const [showMeaning, setShowMeaning] = useState(true);
+  const [showToneColors, setShowToneColors] = useState(true);
   const startedRef = useRef<boolean>(false);
   // Replay management refs
   const replayResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -372,6 +373,13 @@ const Player = () => {
                     aria-pressed={showMeaning}
                     aria-label="Toggle Meaning"
                   >{showMeaning ? 'Hide Meaning' : 'Show Meaning'}</button>
+                  <button
+                    onClick={() => setShowToneColors(c => !c)}
+                    className="px-2 py-1 text-[10px] rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-600"
+                    aria-pressed={showToneColors}
+                    aria-label="Toggle Tone Colors"
+                    disabled={!showPinyin}
+                  >{showToneColors ? 'Plain Pinyin' : 'Color Pinyin'}</button>
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
@@ -400,6 +408,7 @@ const Player = () => {
                   onReplayLine={replayLine}
                   showPinyin={showPinyin}
                   showMeaning={showMeaning}
+                  showToneColors={showToneColors}
                 />
               </CardContent>
             </Card>
