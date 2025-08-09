@@ -38,6 +38,21 @@ const Player = () => {
   const [fps, setFps] = useState<number>(1);
   const [cacheStatus, setCacheStatus] = useState<CacheStatus>("idle");
   const showCacheDebug = process.env.NEXT_PUBLIC_SHOW_CACHE_DEBUG === '1';
+  const [videoId, setVideoId] = useState<string>(() => parseYouTubeId(videoUrl) || "TAb2-hUsb7Q");
+  const [urlInput, setUrlInput] = useState<string>(videoUrl);
+  const [urlError, setUrlError] = useState<string | null>(null);
+
+  // Update derived videoId when urlInput changes (debounced via useEffect timing minimal)
+  useEffect(() => {
+    const id = parseYouTubeId(urlInput.trim());
+    if (id) {
+      setVideoId(id);
+      setVideoUrl(urlInput.trim());
+      setUrlError(null);
+    } else {
+      setUrlError(urlInput ? 'Invalid YouTube URL or ID' : null);
+    }
+  }, [urlInput]);
 
   async function handleDuration(dur: Promise<number>) {
     const duration = await dur;
@@ -117,47 +132,58 @@ const Player = () => {
       let active = 0; let ptr = 0;
       const acc: SubtitleItem[] = [];
       const seen = new Set<string>();
+      const failed: number[] = [];
+      const CHUNK_MAX_ATTEMPTS = 3;
+
+      const fetchChunkWithRetry = async (idx: number) => {
+        const startSec = idx * chunkSeconds;
+        const endSec = Math.min(startSec + chunkSeconds, duration);
+        for (let attempt = 1; attempt <= CHUNK_MAX_ATTEMPTS; attempt++) {
+          try {
+            const r = await fetch('/api/pat/precise-chunk', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ videoUrl, startSec, endSec, fps, force: false }),
+            });
+            const j = await r.json();
+            if (!r.ok || j.error) throw new Error(j.error || 'Chunk failed');
+            const lines = (j.lines || []) as { start: string; end: string; transcription?: string; pinyin?: string; meaning?: string; }[];
+            lines.forEach(line => {
+              const start = parseFloat(line.start);
+              const end = parseFloat(line.end);
+              if (Number.isFinite(start) && Number.isFinite(end)) {
+                const key = `${start}-${end}-${line.pinyin || ''}-${line.meaning || ''}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                acc.push({
+                  startTime: start,
+                  endTime: end,
+                  text: line.transcription || line.meaning || line.pinyin || '',
+                  pinyin: line.pinyin,
+                  meaning: line.meaning,
+                });
+              }
+            });
+            acc.sort((a,b)=>a.startTime-b.startTime);
+            setSubtitles([...acc]);
+            return; // success
+          } catch (err:any) {
+            if (attempt === CHUNK_MAX_ATTEMPTS) {
+              failed.push(idx);
+              setError(`Chunk ${idx+1} failed after ${CHUNK_MAX_ATTEMPTS} attempts: ${err.message}`);
+            }
+            // brief backoff
+            await new Promise(res=>setTimeout(res, 300 * attempt));
+          }
+        }
+      };
       await new Promise<void>((resolve) => {
         const launch = () => {
           if (ptr >= indices.length && active === 0) return resolve();
             while (active < concurrency && ptr < indices.length) {
               const idx = indices[ptr++];
-              const startSec = idx * chunkSeconds;
-              const endSec = Math.min(startSec + chunkSeconds, duration);
-              active++;
-              fetch('/api/pat/precise-chunk', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ videoUrl, startSec, endSec, fps, force: false }),
-              })
-                .then(r => r.json().then(j => ({ ok: r.ok, j })))
-                .then(({ ok, j }) => {
-                  if (!ok || j.error) throw new Error(j.error || 'Chunk failed');
-                  const lines = (j.lines || []) as { start: string; end: string; transcription?: string; pinyin?: string; meaning?: string; }[];
-                  lines.forEach(line => {
-                    const start = parseFloat(line.start); // already absolute seconds (no trailing s)
-                    const end = parseFloat(line.end);
-                    if (Number.isFinite(start) && Number.isFinite(end)) {
-                      const key = `${start}-${end}-${line.pinyin || ''}-${line.meaning || ''}`;
-                      if (seen.has(key)) return;
-                      seen.add(key);
-                      acc.push({
-                        startTime: start,
-                        endTime: end,
-                        text: line.transcription || line.meaning || line.pinyin || '',
-                        pinyin: line.pinyin,
-                        meaning: line.meaning,
-                      });
-                    }
-                  });
-                  acc.sort((a,b)=>a.startTime-b.startTime);
-                  setSubtitles([...acc]);
-                })
-                .catch(e => {
-                  console.error('precise-chunk error', e);
-                  setError(e.message);
-                })
-                .finally(() => { active--; launch(); });
+            active++;
+            fetchChunkWithRetry(idx).finally(()=>{ active--; launch(); });
             }
         };
         launch();
@@ -166,6 +192,9 @@ const Player = () => {
       if (acc.length) {
         setCacheStatus("saving");
         putCachedSubtitles({ videoId, fps, chunkSeconds }, acc).then(()=>setCacheStatus("saved"));
+      }
+      if (failed.length) {
+        console.warn('Failed chunk indices (0-based):', failed);
       }
     } catch (e:any) {
       setError(e.message);
@@ -208,6 +237,15 @@ const Player = () => {
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </Badge>
                   <div className="flex items-center gap-2">
+                    {/* URL Input */}
+                    <input
+                      type="text"
+                      value={urlInput}
+                      onChange={(e)=>setUrlInput(e.target.value)}
+                      placeholder="Paste YouTube URL or ID"
+                      className="text-xs px-2 py-1 rounded border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-400 w-60"
+                    />
+                    {urlError && <span className="text-[10px] text-red-600 font-medium">{urlError}</span>}
                     {showCacheDebug && <CacheDebug status={cacheStatus} message={error} />}
                     <button
                     type="button"
@@ -226,7 +264,7 @@ const Player = () => {
               <CardContent>
                 {/* Video Container */}
                 <PlayerVideo
-                  videoId="TAb2-hUsb7Q"
+                  videoId={videoId}
                   opts={opts}
                   onReady={onPlayerReady}
                   onPlayState={setIsPlaying}
