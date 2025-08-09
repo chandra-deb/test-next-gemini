@@ -1,17 +1,24 @@
 "use client";
 import React, { useRef, useState, useEffect } from "react";
-import YouTube, { YouTubePlayer, YouTubeProps } from "react-youtube";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { PlayerVideo } from "@/components/player/PlayerVideo";
+import { PlayerControls } from "@/components/player/PlayerControls";
+import { SubtitleList } from "@/components/player/SubtitleList";
+import { CurrentSubtitle } from "@/components/player/CurrentSubtitle";
+import { sampleSubtitles } from "@/components/player/sampleSubtitles";
+import { SubtitleItem } from "@/components/player/types";
+import { formatTime } from "@/app/utils/formatTime";
+import type { YouTubePlayer, YouTubeProps } from "react-youtube";
 
 const opts: YouTubeProps["opts"] = {
-  // height: '390',
-  // width: '640',
+  height: "480",
+  width: "854",
   playerVars: {
-    // https://developers.google.com/youtube/player_parameters
     autoplay: 1,
-    //   controls:0,
-    rel:0,
+    rel: 0,
     start: 10,
-    // end: 15,
     loop: 1,
   },
 };
@@ -20,10 +27,16 @@ const Player = () => {
   const playerRef = useRef<YouTubePlayer | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
 
-   const onPlayerReady = (event: { target: YouTubePlayer }) => {
+  async function handleDuration(dur: Promise<number>) {
+    const duration = await dur;
+    setDuration(duration);
+  }
 
-    playerRef.current = event.target;
+  const onPlayerReady = (player: YouTubePlayer) => {
+    playerRef.current = player;
+    handleDuration(player.getDuration());
   };
 
   const seekTo = (seconds: number) => {
@@ -32,7 +45,7 @@ const Player = () => {
     }
   };
 
-    const playVideo = () => {
+  const playVideo = () => {
     playerRef.current?.playVideo();
   };
 
@@ -43,7 +56,7 @@ const Player = () => {
   // Effect to continuously update the current time when video is playing
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    
+
     if (isPlaying && playerRef.current) {
       interval = setInterval(async () => {
         const time = await playerRef.current?.getCurrentTime();
@@ -61,42 +74,82 @@ const Player = () => {
     };
   }, [isPlaying]);
 
-  // Format time as MM:SS.mmm (with milliseconds)
-  const formatTime = (seconds: number) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    const milliseconds = Math.floor((seconds % 1) * 1000);
-    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
-  };
-
+  const getCurrentSubtitle = (): SubtitleItem | undefined =>
+    sampleSubtitles.find(
+      (subtitle) =>
+        currentTime >= subtitle.startTime && currentTime <= subtitle.endTime
+    );
 
   return (
-    <div>
-      <h1>High</h1>
-      
-      {/* Display current time with milliseconds precision */}
-      <div style={{ marginBottom: "1rem", fontSize: "1.2rem", fontWeight: "bold" }}>
-        Current Time: {formatTime(currentTime)}
-      </div>
-      
-      <br></br>
-      <YouTube
-        videoId="vvHuHgfxc7o"
-        loading="eager"
-        opts={opts}
-        onReady={onPlayerReady}
-        onStateChange={(event) => {
-          // Update playing state based on player state
-          const playerState = event.data;
-          setIsPlaying(playerState === 1); // 1 = playing, 2 = paused
-        }}
-     
-      />
-      <div style={{ marginTop: "1rem" }}>
-        <button onClick={() => seekTo(10)}>Go to 10s</button>
-        <button onClick={() => seekTo(30)}>Go to 30s</button>
-        <button onClick={playVideo}>Play</button>
-        <button onClick={pauseVideo}>Pause</button>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-6">
+          <h1 className="text-4xl font-bold text-slate-800 mb-2">
+            Video Player
+          </h1>
+          <p className="text-slate-600">
+            Watch and follow along with synchronized subtitles
+          </p>
+        </div>
+
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Side - Video Player */}
+          <div className="lg:col-span-2">
+            <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
+              <CardHeader className="pb-4">
+                <div className="flex justify-between items-center">
+                  <CardTitle className="text-xl font-semibold text-slate-700">
+                    Video Content
+                  </CardTitle>
+                  <Badge variant="secondary" className="text-sm">
+                    {formatTime(currentTime)} / {formatTime(duration)}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {/* Video Container */}
+                <PlayerVideo
+                  videoId="vvHuHgfxc7o"
+                  opts={opts}
+                  onReady={onPlayerReady}
+                  onPlayState={setIsPlaying}
+                />
+                <CurrentSubtitle current={getCurrentSubtitle()} />
+                <PlayerControls
+                  isPlaying={isPlaying}
+                  currentTime={currentTime}
+                  onPlay={playVideo}
+                  onPause={pauseVideo}
+                  onSeek={seekTo}
+                />
+                <Separator className="my-4" />
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Right Side - Timestamped Subtitles */}
+          <div className="lg:col-span-1">
+            <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm h-fit">
+              <CardHeader>
+                <CardTitle className="text-xl font-semibold text-slate-700 flex items-center gap-2">
+                  📝 Subtitles
+                  <Badge variant="outline" className="ml-auto">
+                    {sampleSubtitles.length} items
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <SubtitleList
+                  subtitles={sampleSubtitles}
+                  currentTime={currentTime}
+                  onSeek={seekTo}
+                />
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       </div>
     </div>
   );
