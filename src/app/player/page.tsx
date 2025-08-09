@@ -34,13 +34,17 @@ const Player = () => {
   const [loadingSubs, setLoadingSubs] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>("https://www.youtube.com/watch?v=TAb2-hUsb7Q");
-  const [autoFetch, setAutoFetch] = useState<boolean>(false);
   const [fps, setFps] = useState<number>(1);
   const [cacheStatus, setCacheStatus] = useState<CacheStatus>("idle");
   const showCacheDebug = process.env.NEXT_PUBLIC_SHOW_CACHE_DEBUG === '1';
   const [videoId, setVideoId] = useState<string>(() => parseYouTubeId(videoUrl) || "TAb2-hUsb7Q");
   const [urlInput, setUrlInput] = useState<string>(videoUrl);
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [firstChunkPending, setFirstChunkPending] = useState(false);
+  const [firstChunkStart, setFirstChunkStart] = useState<number | null>(null);
+  const [showFirstChunkPrompt, setShowFirstChunkPrompt] = useState(false);
+  const [chunksReceived, setChunksReceived] = useState(0);
+  const startedRef = useRef<boolean>(false);
 
   // Update derived videoId when urlInput changes (debounced via useEffect timing minimal)
   useEffect(() => {
@@ -49,6 +53,8 @@ const Player = () => {
       setVideoId(id);
       setVideoUrl(urlInput.trim());
       setUrlError(null);
+  // Mark transcription not started for new video id
+  startedRef.current = false;
     } else {
       setUrlError(urlInput ? 'Invalid YouTube URL or ID' : null);
     }
@@ -115,6 +121,10 @@ const Player = () => {
     setLoadingSubs(true);
     setError(null);
     setSubtitles([]);
+  setFirstChunkPending(true);
+  setFirstChunkStart(null);
+  setShowFirstChunkPrompt(false);
+  setChunksReceived(0);
     try {
       // Attempt cache first
       const videoId = parseYouTubeId(videoUrl) || videoUrl;
@@ -123,6 +133,7 @@ const Player = () => {
       if (cached && cached.length) {
         setSubtitles(cached);
         setCacheStatus("hit");
+    setFirstChunkPending(false);
         setLoadingSubs(false);
         return; // Serve from cache; skip network
       }
@@ -166,6 +177,13 @@ const Player = () => {
             });
             acc.sort((a,b)=>a.startTime-b.startTime);
             setSubtitles([...acc]);
+            // First chunk arrival detection
+            if (firstChunkPending) {
+              setFirstChunkPending(false);
+              setFirstChunkStart(startSec);
+              setShowFirstChunkPrompt(true);
+            }
+            setChunksReceived(c => c + 1);
             return; // success
           } catch (err:any) {
             if (attempt === CHUNK_MAX_ATTEMPTS) {
@@ -204,11 +222,15 @@ const Player = () => {
     }
   };
 
+  // Removed manual/auto fetch toggle: transcription now auto-starts once duration is known.
+
+  // Auto-start transcription immediately once duration is known (first time per video)
   useEffect(() => {
-    if (autoFetch && duration) {
+    if (duration > 0 && !loadingSubs && !startedRef.current) {
+      startedRef.current = true;
       fetchAllChunks();
     }
-  }, [autoFetch, duration, videoUrl, fps]);
+  }, [duration, videoId]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
@@ -247,17 +269,10 @@ const Player = () => {
                     />
                     {urlError && <span className="text-[10px] text-red-600 font-medium">{urlError}</span>}
                     {showCacheDebug && <CacheDebug status={cacheStatus} message={error} />}
-                    <button
-                    type="button"
-                    onClick={() => fetchAllChunks()}
-                    disabled={loadingSubs}
-                    className="px-3 py-1 rounded bg-blue-600 text-white text-xs disabled:opacity-50"
-                  >{loadingSubs ? 'Transcribing…' : 'Transcribe'}</button>
-                  <button
-                    type="button"
-                    onClick={() => setAutoFetch(a=>!a)}
-                    className={`px-3 py-1 rounded text-xs ${autoFetch ? 'bg-green-600 text-white' : 'bg-slate-400 text-white'}`}
-                  >Auto {autoFetch ? 'On':'Off'}</button>
+                  {/* Transcription auto-starts; manual Transcribe & Auto toggle removed */}
+                  {loadingSubs && (
+                    <span className="text-[10px] text-slate-500">Transcribing…</span>
+                  )}
                   </div>
                 </div>
               </CardHeader>
@@ -279,7 +294,12 @@ const Player = () => {
                 />
                 <Separator className="my-4" />
                 {error && <p className="text-xs text-red-600">{error}</p>}
-                {loadingSubs && <p className="text-xs text-slate-500">Fetching chunked subtitles… ({totalChunks} chunks)</p>}
+                {loadingSubs && firstChunkPending && (
+                  <p className="text-xs text-slate-500">Starting transcription… first chunk coming soon. You can already play the video while we process.</p>
+                )}
+                {loadingSubs && !firstChunkPending && chunksReceived > 0 && chunksReceived < totalChunks && (
+                  <p className="text-xs text-slate-500">Received {chunksReceived}/{totalChunks} chunks…</p>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -296,6 +316,24 @@ const Player = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
+                {loadingSubs && firstChunkPending && (
+                  <div className="p-4 text-xs text-slate-500 animate-pulse">
+                    Transcribing… Please wait for the first chunk. (Video is playable meanwhile.)
+                  </div>
+                )}
+                {showFirstChunkPrompt && firstChunkStart != null && (
+                  <div className="p-3 bg-blue-50 border-b border-blue-200 flex items-center gap-2 text-xs text-slate-700">
+                    <span>First subtitle chunk ready.</span>
+                    <button
+                      className="px-2 py-1 bg-blue-600 text-white rounded text-[10px]"
+                      onClick={() => { seekTo(Math.max(0, firstChunkStart - 0.5)); setShowFirstChunkPrompt(false); }}
+                    >Jump to {formatTime(firstChunkStart)}</button>
+                    <button
+                      className="px-2 py-1 bg-slate-300 text-slate-800 rounded text-[10px]"
+                      onClick={() => setShowFirstChunkPrompt(false)}
+                    >Dismiss</button>
+                  </div>
+                )}
                 <SubtitleList
                   subtitles={subtitles}
                   currentTime={currentTime}
