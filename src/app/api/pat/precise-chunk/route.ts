@@ -63,7 +63,12 @@ function formatTime(n: number): string {
 const preciseCache = new Map<string, any>();
 const inflight = new Map<string, Promise<any[]>>();
 
-async function generatePrecise(params: { videoUrl: string; startSec: number; endSec: number; fps: number; }): Promise<any[]> {
+const MAX_ATTEMPTS = 3;
+const BASE_BACKOFF_MS = 500;
+
+async function sleep(ms: number) { return new Promise(res => setTimeout(res, ms)); }
+
+async function generatePreciseOnce(params: { videoUrl: string; startSec: number; endSec: number; fps: number; }): Promise<any[]> {
   const { videoUrl, startSec, endSec, fps } = params;
 
   const prompt = `please provide transcription with pinyin and meaning with second.millisecond precise timestamp. Return ONLY a JSON array where each item has exactly these keys (all strings): start, end, transcription, pinyin, meaning. Example format:\n[\n  {\n    \"start\": \"0.126\",\n    \"end\": \"2.046\",\n    \"transcription\": \"小米首款AI眼鏡。\",\n    \"pinyin\": \"Xiǎomǐ shǒukuǎn AI yǎnjìng.\",\n    \"meaning\": \"Xiaomi's first AI glasses.\"\n  }\n]\nRules:\n- start and end are RELATIVE to this segment (segment start = ${startSec}s)\n- Use seconds with exactly 3 decimal places (e.g. 0.126)\n- JSON only. No commentary, markdown, code fences, or explanations.`;
@@ -94,19 +99,74 @@ async function generatePrecise(params: { videoUrl: string; startSec: number; end
   });
 
   const raw = (response as any).text; // SDK convenience
-  let json: unknown;
-  try {
-    json = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  } catch (e) {
-    throw new Error('Model returned non-JSON content');
+
+  // --- Robust JSON extraction -------------------------------------------------
+  function stripCodeFences(s: string) {
+    return s
+      .replace(/^```(?:json)?/i, '')
+      .replace(/```$/,'')
+      .trim();
   }
 
-  let loose: any[] = [];
-  try {
-    loose = LooseLinesArray.parse(json);
-  } catch (e) {
-    if (Array.isArray(json)) loose = json as any[]; else throw new Error('Response not an array');
+  function safeParse(input: any): unknown {
+    if (Array.isArray(input) || (input && typeof input === 'object')) return input;
+    if (typeof input !== 'string') return input;
+    let txt = input.trim();
+    txt = stripCodeFences(txt);
+    // If the whole string isn't valid JSON, try to extract the first top-level array substring
+    try { return JSON.parse(txt); } catch {}
+    const firstBracket = txt.indexOf('[');
+    const lastBracket = txt.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      const sub = txt.slice(firstBracket, lastBracket + 1);
+      try { return JSON.parse(sub); } catch {}
+    }
+    // Try to fix common trailing commas
+    try { return JSON.parse(txt.replace(/,\s*([}\]])/g,'$1')); } catch {}
+    return input; // give up, caller will handle
   }
+
+  function coerceToArray(val: unknown): any[] {
+    if (Array.isArray(val)) return val;
+    if (val && typeof val === 'object') {
+      const obj = val as Record<string, any>;
+      const candidateKeys = ['lines','result','results','data','items'];
+      for (const k of candidateKeys) {
+        if (Array.isArray(obj[k])) return obj[k];
+      }
+      // Fallback: take first array value
+      for (const v of Object.values(obj)) {
+        if (Array.isArray(v)) return v;
+      }
+    }
+    if (typeof val === 'string') {
+      const parsed = safeParse(val);
+      return coerceToArray(parsed);
+    }
+    return [];
+  }
+
+  const json = safeParse(raw);
+  let loose: any[] = coerceToArray(json);
+
+  // As a last resort, if empty, attempt regex to capture objects with start/end
+  if (!loose.length && typeof raw === 'string') {
+    const objMatches = raw.match(/\{[^}]*start[^}]*end[^}]*}/g);
+    if (objMatches) {
+      loose = objMatches.map(m => {
+        try { return JSON.parse(m); } catch { return {}; }
+      });
+    }
+  }
+
+  if (!Array.isArray(loose)) loose = [];
+  // Validate each item against loose schema individually (skip invalid instead of throwing)
+  loose = loose
+    .map(item => {
+      try { return LooseLineSchema.parse(item); } catch { return null; }
+    })
+    .filter(Boolean) as any[];
+  // ---------------------------------------------------------------------------
 
   // Normalize & sanitize; convert relative -> absolute seconds
   const normalized = loose
@@ -130,7 +190,47 @@ async function generatePrecise(params: { videoUrl: string; startSec: number; end
     .sort((a, b) => parseFloat(a.start) - parseFloat(b.start));
 
   // Validate against strict final schema
-  return z.array(StrictLineSchema).parse(normalized);
+  // If model produced nothing usable, return empty array instead of throwing so client can continue combining chunks.
+  try {
+    return z.array(StrictLineSchema).parse(normalized);
+  } catch (e) {
+    console.warn('[precise-chunk] strict validation failed, returning best-effort array', e);
+    return [];
+  }
+}
+
+async function generatePrecise(params: { videoUrl: string; startSec: number; endSec: number; fps: number; }): Promise<any[]> {
+  const { startSec, endSec } = params;
+  const errors: any[] = [];
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const t0 = Date.now();
+    try {
+      const lines = await generatePreciseOnce(params);
+      if (lines.length > 0) {
+        if (attempt > 1) console.info(`[precise-chunk] success after retry attempt ${attempt} for segment ${startSec}-${endSec}`);
+        return lines;
+      }
+      // No lines, treat as transient failure and retry unless last attempt
+      if (attempt < MAX_ATTEMPTS) {
+        console.warn(`[precise-chunk] empty result attempt ${attempt}/${MAX_ATTEMPTS} for segment ${startSec}-${endSec}; retrying`);
+        await sleep(BASE_BACKOFF_MS * attempt);
+        continue;
+      }
+      return lines; // final empty
+    } catch (e:any) {
+      errors.push(e);
+      const dur = Date.now() - t0;
+      if (attempt < MAX_ATTEMPTS) {
+        const delay = BASE_BACKOFF_MS * attempt;
+        console.warn(`[precise-chunk] attempt ${attempt}/${MAX_ATTEMPTS} failed (${dur}ms) for segment ${startSec}-${endSec}: ${e?.message || e}. Retrying in ${delay}ms`);
+        await sleep(delay);
+        continue;
+      }
+      console.error(`[precise-chunk] all ${MAX_ATTEMPTS} attempts failed for segment ${startSec}-${endSec}`, errors.map(er => er?.message || String(er)));
+      throw e;
+    }
+  }
+  return []; // unreachable
 }
 
 export async function POST(req: Request) {
