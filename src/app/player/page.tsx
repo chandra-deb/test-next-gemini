@@ -13,6 +13,7 @@ import { formatTime } from "@/app/utils/formatTime";
 import { getCachedSubtitles, putCachedSubtitles, parseYouTubeId } from "@/app/utils/subtitleCache";
 import { CacheDebug, CacheStatus } from "@/components/player/CacheDebug";
 import type { YouTubePlayer, YouTubeProps } from "react-youtube";
+import { REPLAY_PREROLL_SECONDS, REPLAY_RESET_BUFFER_SECONDS } from "@/config/replayConfig";
 
 const opts: YouTubeProps["opts"] = {
   height: "480",
@@ -45,6 +46,9 @@ const Player = () => {
   const [showFirstChunkPrompt, setShowFirstChunkPrompt] = useState(false);
   const [chunksReceived, setChunksReceived] = useState(0);
   const startedRef = useRef<boolean>(false);
+  // Replay management refs
+  const replayResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const replaySessionRef = useRef<number>(0);
 
   // Update derived videoId when urlInput changes (debounced via useEffect timing minimal)
   useEffect(() => {
@@ -73,6 +77,47 @@ const Player = () => {
   const seekTo = (seconds: number) => {
     if (playerRef.current) {
       playerRef.current.seekTo(seconds, true);
+    }
+  };
+
+  const replayLine = (subtitle: SubtitleItem, rate: number = 1) => {
+    if (!playerRef.current) return;
+    // Increment session so prior scheduled resets won't apply
+    replaySessionRef.current += 1;
+    const sessionId = replaySessionRef.current;
+    // Clear any previous pending reset
+    if (replayResetTimerRef.current) {
+      clearTimeout(replayResetTimerRef.current);
+      replayResetTimerRef.current = null;
+    }
+    try {
+      playerRef.current.setPlaybackRate(rate);
+    } catch {}
+    // Seek slightly before start for context
+  const preroll = REPLAY_PREROLL_SECONDS;
+    seekTo(Math.max(0, subtitle.startTime - preroll));
+    playerRef.current.playVideo();
+    if (rate !== 1) {
+  // Compute how long real time playback will take at the slower rate.
+  // The video clock advances 'rate' seconds of media per 1 real second.
+  // So to cover (preroll + lineDuration) seconds of media at speed 'rate'
+  // we need (preroll + lineDuration)/rate real seconds.
+  // Then add a small buffer to avoid premature reset.
+  const lineDuration = subtitle.endTime - subtitle.startTime;
+  const buffer = REPLAY_RESET_BUFFER_SECONDS; // extra safety
+  const realPlaybackSeconds = (preroll + lineDuration) / rate + buffer;
+  const resetDelay = realPlaybackSeconds * 1000;
+      replayResetTimerRef.current = setTimeout(() => {
+        if (!playerRef.current) return;
+        // Guard: only act if session still current
+        if (replaySessionRef.current !== sessionId) return;
+        try {
+          const currentRate: any = (playerRef.current as any).getPlaybackRate();
+            if (Number(currentRate) === rate) {
+              playerRef.current.setPlaybackRate(1);
+            }
+        } catch {}
+      }, resetDelay);
     }
   };
 
@@ -338,6 +383,7 @@ const Player = () => {
                   subtitles={subtitles}
                   currentTime={currentTime}
                   onSeek={seekTo}
+                  onReplayLine={replayLine}
                 />
               </CardContent>
             </Card>

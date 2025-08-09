@@ -4,14 +4,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { SubtitleItem } from "./types";
 import { formatTime } from "@/app/utils/formatTime";
+import { Button } from "@/components/ui/button";
 
 export interface SubtitleListProps {
   subtitles: SubtitleItem[];
   currentTime: number;
   onSeek: (time: number) => void;
+  onReplayLine: (subtitle: SubtitleItem, rate?: number) => void;
 }
 
-export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTime, onSeek }) => {
+export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTime, onSeek, onReplayLine }) => {
   const activeRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -42,13 +44,36 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
                   {formatTime(subtitle.startTime)}
                 </Badge>
                 <div className={`text-sm leading-relaxed flex-1 ${active ? "text-slate-800 font-medium" : "text-slate-600"}`}>
-                  <p>{subtitle.text}</p>
+                  <p className="whitespace-pre-wrap break-words">{subtitle.text}</p>
                   {(subtitle.pinyin || subtitle.meaning) && (
                     <p className="text-[11px] mt-1 text-slate-500">
                       {subtitle.pinyin && <span className="mr-2 font-semibold">{subtitle.pinyin}</span>}
                       {subtitle.meaning}
                     </p>
                   )}
+                  <div className="mt-2 flex gap-1 flex-wrap">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-5 px-2 text-[10px] leading-none"
+                      onClick={(e) => { e.stopPropagation(); onReplayLine(subtitle, 1); }}
+                      aria-label="Replay line"
+                    >↺</Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-5 px-2 text-[10px] leading-none"
+                      onClick={(e) => { e.stopPropagation(); onReplayLine(subtitle, 0.75); }}
+                      aria-label="Replay at 0.75x"
+                    >0.75x</Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-5 px-2 text-[10px] leading-none"
+                      onClick={(e) => { e.stopPropagation(); onReplayLine(subtitle, 0.5); }}
+                      aria-label="Replay at 0.5x"
+                    >0.5x</Button>
+                  </div>
                 </div>
               </div>
               <div className="mt-2 flex justify-between items-center text-xs text-slate-400">
