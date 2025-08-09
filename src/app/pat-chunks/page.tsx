@@ -43,6 +43,126 @@ export default function ChunkTranscriptionPage() {
   const [aborted, setAborted] = useState(false);
   const abortRef = useRef<boolean>(false);
 
+  // ---------------- IndexedDB Caching -----------------
+  // We cache individual chunk transcript lines so repeated visits don't re-call the API.
+  // Keyed by videoId + chunkIndex + fps + duration to avoid mixing incompatible variants.
+  const DB_NAME = 'patSubtitles';
+  const DB_VERSION = 1;
+  const STORE = 'chunks';
+  const dbRef = useRef<IDBDatabase | null>(null);
+
+  function extractVideoKey(url: string): string {
+    try {
+      const u = new URL(url);
+      if (/youtu\.be$/.test(u.hostname)) return u.pathname.slice(1);
+      if (u.hostname.includes('youtube.com')) return u.searchParams.get('v') || url;
+      return url;
+    } catch {
+      return url;
+    }
+  }
+  const videoKeyId = useMemo(() => extractVideoKey(videoUrl).replace(/[^\w]/g, '').slice(0, 48), [videoUrl]);
+
+  function openDb(): Promise<IDBDatabase> {
+    if (dbRef.current) return Promise.resolve(dbRef.current);
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onerror = () => reject(req.error);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE)) {
+          const os = db.createObjectStore(STORE, { keyPath: 'id' });
+          os.createIndex('videoId', 'videoId', { unique: false });
+        }
+      };
+      req.onsuccess = () => { dbRef.current = req.result; resolve(req.result); };
+    });
+  }
+
+  async function idbGet(id: string) {
+    const db = await openDb();
+    return new Promise<any | undefined>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const store = tx.objectStore(STORE);
+      const r = store.get(id);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+  }
+  async function idbPut(record: any) {
+    const db = await openDb();
+    return new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.objectStore(STORE).put(record);
+    });
+  }
+  async function idbGetAllForVideo(videoId: string) {
+    const db = await openDb();
+    return new Promise<any[]>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const store = tx.objectStore(STORE);
+      const idx = store.index('videoId');
+      const req = idx.openCursor(IDBKeyRange.only(videoId));
+      const out: any[] = [];
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) { out.push(cursor.value); cursor.continue(); } else resolve(out);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbDeleteVideo(videoId: string) {
+    const db = await openDb();
+    return new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      const idx = store.index('videoId');
+      const req = idx.openCursor(IDBKeyRange.only(videoId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) { cursor.delete(); cursor.continue(); } else resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function loadCachedChunks() {
+    try {
+      const records = await idbGetAllForVideo(videoKeyId);
+      if (!records.length) return;
+      const filtered = records.filter(r => r.durationSec === durationSec && r.fps === fps);
+      if (!filtered.length) return;
+      // Merge lines
+      const allLines: TranscriptLine[] = [];
+      const seen = new Set<string>();
+      filtered.forEach(r => {
+        (r.lines as TranscriptLine[]).forEach(l => {
+          const key = `${l.start}|${l.end}|${l.pinyin}|${l.meaning}`;
+            if (!seen.has(key)) { seen.add(key); allLines.push(l); }
+        });
+      });
+      setLines(prev => {
+        const prevKeys = new Set(prev.map(l => `${l.start}|${l.end}|${l.pinyin}`));
+        const add = allLines.filter(l => !prevKeys.has(`${l.start}|${l.end}|${l.pinyin}`));
+        return [...prev, ...add];
+      });
+      // Update chunk states
+      setChunkStates(cs => cs.map(c => {
+        const rec = filtered.find(r => r.chunkIndex === c.index);
+        return rec ? { ...c, status: 'done', cached: true, lineCount: rec.lines.length, durationSec: rec.endSec - rec.startSec } : c;
+      }));
+    } catch (e) {
+      console.warn('Load cache failed', e);
+    }
+  }
+
+  async function clearVideoCache() {
+    await idbDeleteVideo(videoKeyId);
+    // Do not alter current lines automatically; user may choose to re-run
+  }
+
   const totalChunks = useMemo(() => Math.ceil(durationSec / 60), [durationSec]);
   const [chunkStates, setChunkStates] = useState<ChunkStateEntry[]>(() => Array.from({ length: totalChunks }, (_, i) => ({
     index: i,
@@ -78,7 +198,25 @@ export default function ChunkTranscriptionPage() {
   async function fetchChunk(index: number) {
     const c = chunkStates.find(x => x.index === index);
     if (!c || c.status === 'pending') return;
-    updateChunkState(index, { status: 'pending', error: undefined });
+    // Check local cache first unless force set
+    const cacheKey = `${videoKeyId}:${index}:fps${fps}:dur${durationSec}`;
+    if (!force) {
+      try {
+        const rec = await idbGet(cacheKey);
+        if (rec && rec.lines) {
+          setLines(prev => {
+            const existingKeys = new Set(prev.map(l => `${l.start}|${l.end}|${l.pinyin}`));
+            const filtered = (rec.lines as TranscriptLine[]).filter(l => !existingKeys.has(`${l.start}|${l.end}|${l.pinyin}`));
+            return [...prev, ...filtered];
+          });
+          updateChunkState(index, { status: 'done', cached: true, lineCount: rec.lines.length, durationSec: c.endSec - c.startSec });
+          return; // Skip network
+        }
+      } catch (e) {
+        console.warn('Cache read failed', e);
+      }
+    }
+    updateChunkState(index, { status: 'pending', error: undefined, cached: false });
     try {
       const res = await fetch('/api/pat/chunk', {
         method: 'POST',
@@ -97,6 +235,20 @@ export default function ChunkTranscriptionPage() {
         const filtered = newLines.filter(l => !existingKeys.has(`${l.start}|${l.end}|${l.pinyin}`));
         return [...prev, ...filtered];
       });
+      // Persist to cache (store meta + lines)
+      try {
+        await idbPut({
+          id: cacheKey,
+            videoId: videoKeyId,
+            chunkIndex: index,
+            startSec: c.startSec,
+            endSec: c.endSec,
+            durationSec: durationSec,
+            fps,
+            lines: (json as ChunkResponse).lines,
+            updatedAt: Date.now(),
+        });
+      } catch (e) { console.warn('Cache write failed', e); }
       updateChunkState(index, { status: 'done', cached, lineCount: (json as ChunkResponse).lines.length, durationSec: c.endSec - c.startSec });
     } catch (e: any) {
       updateChunkState(index, { status: 'error', error: e.message });
@@ -365,6 +517,18 @@ export default function ChunkTranscriptionPage() {
             >
               Auto {autoRun ? 'On' : 'Off'}
             </button>
+            <button
+              type="button"
+              onClick={() => loadCachedChunks()}
+              disabled={running}
+              className="px-3 py-2 rounded bg-teal-600 text-white text-sm disabled:opacity-50"
+            >Load Cache</button>
+            <button
+              type="button"
+              onClick={() => { clearVideoCache(); setChunkStates(cs => cs.map(c => ({...c, cached: false, status: c.status==='done'?'idle':c.status, lineCount: undefined }))); }}
+              disabled={running}
+              className="px-3 py-2 rounded bg-red-700 text-white text-sm disabled:opacity-50"
+            >Clear Cache</button>
           </div>
           <div className="w-full h-2 rounded bg-zinc-300 dark:bg-zinc-800 overflow-hidden">
             <div
