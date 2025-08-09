@@ -2,7 +2,7 @@ import { SubtitleItem } from "./types";
 
 // Sample subtitle data - replace with your actual subtitles or load dynamically.
 export const sampleSubtitles: SubtitleItem[] = [
-  { startTime: 0, endTime: 3.5, text: "Welcome to our amazing video tutorial" },
+  { startTime: 0, endTime: 3.5, text: "Welcome to our amazing video tutorial", pinyin: "huān yíng", meaning: "welcome" },
   { startTime: 3.5, endTime: 7.2, text: "Today we'll be learning about React and Next.js" },
   { startTime: 7.2, endTime: 11.8, text: "First, let's understand the basic concepts" },
   { startTime: 11.8, endTime: 15.3, text: "React is a powerful JavaScript library" },

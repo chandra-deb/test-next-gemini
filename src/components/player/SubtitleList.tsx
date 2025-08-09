@@ -34,15 +34,22 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
               className={`p-3 rounded-lg border transition-all duration-300 cursor-pointer ${
                 active ? "bg-blue-50 border-blue-200 shadow-md scale-105" : "bg-white border-slate-200 hover:bg-slate-50"
               }`}
-              onClick={() => onSeek(subtitle.startTime)}
+              // Apply a 0.5s preroll so playback starts slightly before the subtitle
+              onClick={() => onSeek(Math.max(0, subtitle.startTime - 0.5))}
             >
               <div className="flex items-start gap-3">
                 <Badge variant={active ? "default" : "secondary"} className="text-xs font-mono min-w-fit">
                   {formatTime(subtitle.startTime)}
                 </Badge>
-                <p className={`text-sm leading-relaxed flex-1 ${active ? "text-slate-800 font-medium" : "text-slate-600"}`}>
-                  {subtitle.text}
-                </p>
+                <div className={`text-sm leading-relaxed flex-1 ${active ? "text-slate-800 font-medium" : "text-slate-600"}`}>
+                  <p>{subtitle.text}</p>
+                  {(subtitle.pinyin || subtitle.meaning) && (
+                    <p className="text-[11px] mt-1 text-slate-500">
+                      {subtitle.pinyin && <span className="mr-2 font-semibold">{subtitle.pinyin}</span>}
+                      {subtitle.meaning}
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="mt-2 flex justify-between items-center text-xs text-slate-400">
                 <span>

@@ -28,6 +28,12 @@ const Player = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
+  const [subtitles, setSubtitles] = useState<SubtitleItem[]>(sampleSubtitles);
+  const [loadingSubs, setLoadingSubs] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string>("https://www.youtube.com/watch?v=vvHuHgfxc7o");
+  const [autoFetch, setAutoFetch] = useState<boolean>(false);
+  const [fps, setFps] = useState<number>(1);
 
   async function handleDuration(dur: Promise<number>) {
     const duration = await dur;
@@ -75,10 +81,84 @@ const Player = () => {
   }, [isPlaying]);
 
   const getCurrentSubtitle = (): SubtitleItem | undefined =>
-    sampleSubtitles.find(
+    subtitles.find(
       (subtitle) =>
         currentTime >= subtitle.startTime && currentTime <= subtitle.endTime
     );
+
+  // Derive total chunks for precise-chunk route (we still segment client-side)
+  const chunkSeconds = 60; // could expose UI control later
+  const totalChunks = duration ? Math.ceil(duration / chunkSeconds) : 0;
+
+  // Fetch using new /api/pat/precise-chunk route
+  const fetchAllChunks = async () => {
+    if (!videoUrl || !duration) return;
+    setLoadingSubs(true);
+    setError(null);
+    setSubtitles([]);
+    try {
+      const concurrency = 2;
+      const indices = [...Array(totalChunks).keys()];
+      let active = 0; let ptr = 0;
+      const acc: SubtitleItem[] = [];
+      const seen = new Set<string>();
+      await new Promise<void>((resolve) => {
+        const launch = () => {
+          if (ptr >= indices.length && active === 0) return resolve();
+            while (active < concurrency && ptr < indices.length) {
+              const idx = indices[ptr++];
+              const startSec = idx * chunkSeconds;
+              const endSec = Math.min(startSec + chunkSeconds, duration);
+              active++;
+              fetch('/api/pat/precise-chunk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ videoUrl, startSec, endSec, fps, force: false }),
+              })
+                .then(r => r.json().then(j => ({ ok: r.ok, j })))
+                .then(({ ok, j }) => {
+                  if (!ok || j.error) throw new Error(j.error || 'Chunk failed');
+                  const lines = (j.lines || []) as { start: string; end: string; transcription?: string; pinyin?: string; meaning?: string; }[];
+                  lines.forEach(line => {
+                    const start = parseFloat(line.start); // already absolute seconds (no trailing s)
+                    const end = parseFloat(line.end);
+                    if (Number.isFinite(start) && Number.isFinite(end)) {
+                      const key = `${start}-${end}-${line.pinyin || ''}-${line.meaning || ''}`;
+                      if (seen.has(key)) return;
+                      seen.add(key);
+                      acc.push({
+                        startTime: start,
+                        endTime: end,
+                        text: line.transcription || line.meaning || line.pinyin || '',
+                        pinyin: line.pinyin,
+                        meaning: line.meaning,
+                      });
+                    }
+                  });
+                  acc.sort((a,b)=>a.startTime-b.startTime);
+                  setSubtitles([...acc]);
+                })
+                .catch(e => {
+                  console.error('precise-chunk error', e);
+                  setError(e.message);
+                })
+                .finally(() => { active--; launch(); });
+            }
+        };
+        launch();
+      });
+    } catch (e:any) {
+      setError(e.message);
+    } finally {
+      setLoadingSubs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (autoFetch && duration) {
+      fetchAllChunks();
+    }
+  }, [autoFetch, duration, videoUrl, fps]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
@@ -99,13 +179,24 @@ const Player = () => {
           <div className="lg:col-span-2">
             <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
               <CardHeader className="pb-4">
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center gap-2 flex-wrap">
                   <CardTitle className="text-xl font-semibold text-slate-700">
                     Video Content
                   </CardTitle>
                   <Badge variant="secondary" className="text-sm">
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </Badge>
+                  <button
+                    type="button"
+                    onClick={() => fetchAllChunks()}
+                    disabled={loadingSubs}
+                    className="px-3 py-1 rounded bg-blue-600 text-white text-xs disabled:opacity-50"
+                  >{loadingSubs ? 'Transcribing…' : 'Transcribe'}</button>
+                  <button
+                    type="button"
+                    onClick={() => setAutoFetch(a=>!a)}
+                    className={`px-3 py-1 rounded text-xs ${autoFetch ? 'bg-green-600 text-white' : 'bg-slate-400 text-white'}`}
+                  >Auto {autoFetch ? 'On':'Off'}</button>
                 </div>
               </CardHeader>
               <CardContent>
@@ -125,6 +216,8 @@ const Player = () => {
                   onSeek={seekTo}
                 />
                 <Separator className="my-4" />
+                {error && <p className="text-xs text-red-600">{error}</p>}
+                {loadingSubs && <p className="text-xs text-slate-500">Fetching chunked subtitles… ({totalChunks} chunks)</p>}
               </CardContent>
             </Card>
           </div>
@@ -136,13 +229,13 @@ const Player = () => {
                 <CardTitle className="text-xl font-semibold text-slate-700 flex items-center gap-2">
                   📝 Subtitles
                   <Badge variant="outline" className="ml-auto">
-                    {sampleSubtitles.length} items
+                    {subtitles.length} items
                   </Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 <SubtitleList
-                  subtitles={sampleSubtitles}
+                  subtitles={subtitles}
                   currentTime={currentTime}
                   onSeek={seekTo}
                 />
