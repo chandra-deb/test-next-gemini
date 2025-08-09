@@ -45,6 +45,8 @@ const Player = () => {
   const [firstChunkStart, setFirstChunkStart] = useState<number | null>(null);
   const [showFirstChunkPrompt, setShowFirstChunkPrompt] = useState(false);
   const [chunksReceived, setChunksReceived] = useState(0);
+  const [showPinyin, setShowPinyin] = useState(true);
+  const [showMeaning, setShowMeaning] = useState(true);
   const startedRef = useRef<boolean>(false);
   // Replay management refs
   const replayResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -358,6 +360,18 @@ const Player = () => {
                   <Badge variant="outline" className="ml-auto">
                     {subtitles.length} items
                   </Badge>
+                  <button
+                    onClick={() => setShowPinyin(p => !p)}
+                    className="ml-2 px-2 py-1 text-[10px] rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-600"
+                    aria-pressed={showPinyin}
+                    aria-label="Toggle Pinyin"
+                  >{showPinyin ? 'Hide Pinyin' : 'Show Pinyin'}</button>
+                  <button
+                    onClick={() => setShowMeaning(m => !m)}
+                    className="px-2 py-1 text-[10px] rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-600"
+                    aria-pressed={showMeaning}
+                    aria-label="Toggle Meaning"
+                  >{showMeaning ? 'Hide Meaning' : 'Show Meaning'}</button>
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
@@ -384,6 +398,8 @@ const Player = () => {
                   currentTime={currentTime}
                   onSeek={seekTo}
                   onReplayLine={replayLine}
+                  showPinyin={showPinyin}
+                  showMeaning={showMeaning}
                 />
               </CardContent>
             </Card>

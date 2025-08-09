@@ -11,9 +11,11 @@ export interface SubtitleListProps {
   currentTime: number;
   onSeek: (time: number) => void;
   onReplayLine: (subtitle: SubtitleItem, rate?: number) => void;
+  showPinyin?: boolean;
+  showMeaning?: boolean;
 }
 
-export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTime, onSeek, onReplayLine }) => {
+export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTime, onSeek, onReplayLine, showPinyin = true, showMeaning = true }) => {
   const activeRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -45,12 +47,12 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
                 </Badge>
                 <div className={`text-sm leading-relaxed flex-1 ${active ? "text-slate-800 font-medium" : "text-slate-600"}`}>
                   <p className="whitespace-pre-wrap break-words">{subtitle.text}</p>
-                  {(subtitle.pinyin || subtitle.meaning) && (
+          {(showPinyin && subtitle.pinyin) || (showMeaning && subtitle.meaning) ? (
                     <p className="text-[11px] mt-1 text-slate-500">
-                      {subtitle.pinyin && <span className="mr-2 font-semibold">{subtitle.pinyin}</span>}
-                      {subtitle.meaning}
+            {showPinyin && subtitle.pinyin && <span className="mr-2 font-semibold">{subtitle.pinyin}</span>}
+            {showMeaning && subtitle.meaning}
                     </p>
-                  )}
+          ) : null}
                   <div className="mt-2 flex gap-1 flex-wrap">
                     <Button
                       variant="outline"
