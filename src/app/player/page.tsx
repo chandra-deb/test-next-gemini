@@ -10,6 +10,8 @@ import { CurrentSubtitle } from "@/components/player/CurrentSubtitle";
 import { sampleSubtitles } from "@/components/player/sampleSubtitles";
 import { SubtitleItem } from "@/components/player/types";
 import { formatTime } from "@/app/utils/formatTime";
+import { getCachedSubtitles, putCachedSubtitles, parseYouTubeId } from "@/app/utils/subtitleCache";
+import { CacheDebug, CacheStatus } from "@/components/player/CacheDebug";
 import type { YouTubePlayer, YouTubeProps } from "react-youtube";
 
 const opts: YouTubeProps["opts"] = {
@@ -31,9 +33,11 @@ const Player = () => {
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>(sampleSubtitles);
   const [loadingSubs, setLoadingSubs] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string>("https://www.youtube.com/watch?v=vvHuHgfxc7o");
+  const [videoUrl, setVideoUrl] = useState<string>("https://www.youtube.com/watch?v=TAb2-hUsb7Q");
   const [autoFetch, setAutoFetch] = useState<boolean>(false);
   const [fps, setFps] = useState<number>(1);
+  const [cacheStatus, setCacheStatus] = useState<CacheStatus>("idle");
+  const showCacheDebug = process.env.NEXT_PUBLIC_SHOW_CACHE_DEBUG === '1';
 
   async function handleDuration(dur: Promise<number>) {
     const duration = await dur;
@@ -97,6 +101,17 @@ const Player = () => {
     setError(null);
     setSubtitles([]);
     try {
+      // Attempt cache first
+      const videoId = parseYouTubeId(videoUrl) || videoUrl;
+      setCacheStatus("idle");
+      const cached = await getCachedSubtitles({ videoId, fps, chunkSeconds });
+      if (cached && cached.length) {
+        setSubtitles(cached);
+        setCacheStatus("hit");
+        setLoadingSubs(false);
+        return; // Serve from cache; skip network
+      }
+      setCacheStatus("miss");
       const concurrency = 2;
       const indices = [...Array(totalChunks).keys()];
       let active = 0; let ptr = 0;
@@ -147,8 +162,14 @@ const Player = () => {
         };
         launch();
       });
+      // After all chunks collected, persist to cache
+      if (acc.length) {
+        setCacheStatus("saving");
+        putCachedSubtitles({ videoId, fps, chunkSeconds }, acc).then(()=>setCacheStatus("saved"));
+      }
     } catch (e:any) {
       setError(e.message);
+      setCacheStatus("error");
     } finally {
       setLoadingSubs(false);
     }
@@ -186,7 +207,9 @@ const Player = () => {
                   <Badge variant="secondary" className="text-sm">
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </Badge>
-                  <button
+                  <div className="flex items-center gap-2">
+                    {showCacheDebug && <CacheDebug status={cacheStatus} message={error} />}
+                    <button
                     type="button"
                     onClick={() => fetchAllChunks()}
                     disabled={loadingSubs}
@@ -197,12 +220,13 @@ const Player = () => {
                     onClick={() => setAutoFetch(a=>!a)}
                     className={`px-3 py-1 rounded text-xs ${autoFetch ? 'bg-green-600 text-white' : 'bg-slate-400 text-white'}`}
                   >Auto {autoFetch ? 'On':'Off'}</button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
                 {/* Video Container */}
                 <PlayerVideo
-                  videoId="vvHuHgfxc7o"
+                  videoId="TAb2-hUsb7Q"
                   opts={opts}
                   onReady={onPlayerReady}
                   onPlayState={setIsPlaying}
