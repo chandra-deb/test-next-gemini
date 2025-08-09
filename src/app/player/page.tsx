@@ -48,6 +48,11 @@ const Player = () => {
   const [showPinyin, setShowPinyin] = useState(true);
   const [showMeaning, setShowMeaning] = useState(true);
   const [showToneColors, setShowToneColors] = useState(true);
+  const [lockedSubtitle, setLockedSubtitle] = useState<SubtitleItem | null>(null);
+  // Loop control: prevents immediate re-seek on initial lock
+  const loopArmedRef = useRef<boolean>(false);
+  const prevTimeRef = useRef<number>(0); // track previous time to detect forward crossing
+  const firstLoopRef = useRef<boolean>(true); // first iteration uses preroll, later ones not
   const startedRef = useRef<boolean>(false);
   // Replay management refs
   const replayResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,6 +90,10 @@ const Player = () => {
 
   const replayLine = (subtitle: SubtitleItem, rate: number = 1) => {
     if (!playerRef.current) return;
+    // If user replays another line manually while one is locked, unlock existing
+    if (lockedSubtitle && (lockedSubtitle.startTime !== subtitle.startTime || lockedSubtitle.endTime !== subtitle.endTime)) {
+      setLockedSubtitle(null);
+    }
     // Increment session so prior scheduled resets won't apply
     replaySessionRef.current += 1;
     const sessionId = replaySessionRef.current;
@@ -132,6 +141,23 @@ const Player = () => {
     playerRef.current?.pauseVideo();
   };
 
+  const toggleLockSubtitle = (subtitle: SubtitleItem) => {
+    if (lockedSubtitle && lockedSubtitle.startTime === subtitle.startTime && lockedSubtitle.endTime === subtitle.endTime) {
+      setLockedSubtitle(null);
+      loopArmedRef.current = false;
+      firstLoopRef.current = true;
+      return;
+    }
+    setLockedSubtitle(subtitle);
+    loopArmedRef.current = false; // disarm until playback crosses start
+    firstLoopRef.current = true;
+    // Seek to start with small preroll and ensure normal speed
+    try { playerRef.current?.setPlaybackRate(1); } catch {}
+    const smallPreroll = Math.min(0.3, REPLAY_PREROLL_SECONDS);
+    seekTo(Math.max(0, subtitle.startTime - smallPreroll));
+    playVideo();
+  };
+
   // Effect to continuously update the current time when video is playing
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -152,6 +178,39 @@ const Player = () => {
       }
     };
   }, [isPlaying]);
+
+  // Loop the locked subtitle segment
+  useEffect(() => {
+    if (!lockedSubtitle || !playerRef.current) return;
+    const start = lockedSubtitle.startTime;
+    const end = lockedSubtitle.endTime;
+    const LOOP_THRESHOLD = 0.015; // 15ms tolerance
+
+    // If time jumped backwards (e.g., manual seek) reset arming logic
+    if (currentTime < prevTimeRef.current - 0.05) {
+      loopArmedRef.current = false;
+      firstLoopRef.current = false; // treat as subsequent
+    }
+
+    // Arm after we've genuinely entered the line (past its exact start)
+    if (!loopArmedRef.current && currentTime >= start + 0.005) {
+      loopArmedRef.current = true;
+    }
+
+    // Detect forward crossing of end boundary (prev below threshold, current above)
+    const prev = prevTimeRef.current;
+    const crossedEnd = loopArmedRef.current && prev < end - LOOP_THRESHOLD && currentTime >= end - LOOP_THRESHOLD;
+    if (crossedEnd) {
+      loopArmedRef.current = false; // will re-arm after re-entering
+      // For first loop AFTER the initial playback we remove preroll to avoid double-hearing opening fragment
+      const usePreroll = firstLoopRef.current ? false : false; // we already applied preroll only on initial lock seek
+      firstLoopRef.current = false;
+      const seekTarget = usePreroll ? Math.max(0, start - Math.min(0.3, REPLAY_PREROLL_SECONDS)) : start;
+      playerRef.current.seekTo(seekTarget, true);
+      playerRef.current.playVideo();
+    }
+    prevTimeRef.current = currentTime;
+  }, [currentTime, lockedSubtitle]);
 
   const getCurrentSubtitle = (): SubtitleItem | undefined =>
     subtitles.find(
@@ -409,6 +468,8 @@ const Player = () => {
                   showPinyin={showPinyin}
                   showMeaning={showMeaning}
                   showToneColors={showToneColors}
+                  lockedSubtitle={lockedSubtitle}
+                  onToggleLock={toggleLockSubtitle}
                 />
               </CardContent>
             </Card>

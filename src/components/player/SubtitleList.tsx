@@ -14,9 +14,11 @@ export interface SubtitleListProps {
   showPinyin?: boolean;
   showMeaning?: boolean;
   showToneColors?: boolean;
+  lockedSubtitle?: SubtitleItem | null;
+  onToggleLock?: (subtitle: SubtitleItem) => void;
 }
 
-export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTime, onSeek, onReplayLine, showPinyin = true, showMeaning = true, showToneColors = true }) => {
+export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTime, onSeek, onReplayLine, showPinyin = true, showMeaning = true, showToneColors = true, lockedSubtitle, onToggleLock }) => {
   const activeRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -90,12 +92,13 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
       <div className="space-y-2 pb-4">
         {subtitles.map((subtitle, index) => {
           const active = isActive(subtitle);
+          const locked = lockedSubtitle && lockedSubtitle.startTime === subtitle.startTime && lockedSubtitle.endTime === subtitle.endTime;
           return (
             <div
               key={index}
               ref={active ? activeRef : null}
               className={`p-3 rounded-lg border transition-all duration-300 cursor-pointer ${
-                active ? "bg-blue-50 border-blue-200 shadow-md scale-105" : "bg-white border-slate-200 hover:bg-slate-50"
+                locked ? "bg-purple-50 border-purple-300 shadow-md" : active ? "bg-blue-50 border-blue-200 shadow-md scale-105" : "bg-white border-slate-200 hover:bg-slate-50"
               }`}
               // Apply a 0.5s preroll so playback starts slightly before the subtitle
               onClick={() => onSeek(Math.max(0, subtitle.startTime - 0.5))}
@@ -140,6 +143,14 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
                       onClick={(e) => { e.stopPropagation(); onReplayLine(subtitle, 0.5); }}
                       aria-label="Replay at 0.5x"
                     >0.5x</Button>
+                    <Button
+                      variant={locked ? "default" : "outline"}
+                      size="sm"
+                      className={`h-5 px-2 text-[10px] leading-none ${locked ? 'bg-purple-600 hover:bg-purple-600 text-white' : ''}`}
+                      onClick={(e) => { e.stopPropagation(); onToggleLock && onToggleLock(subtitle); }}
+                      aria-pressed={locked ? true : false}
+                      aria-label={locked ? 'Unlock looping for this line' : 'Lock this line to loop'}
+                    >{locked ? 'Looping' : 'Loop'}</Button>
                   </div>
                 </div>
               </div>
@@ -147,7 +158,7 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
                 <span>
                   Duration: {(subtitle.endTime - subtitle.startTime).toFixed(1)}s
                 </span>
-                <span>#{index + 1}</span>
+                <span>{locked ? '🔁' : `#${index + 1}`}</span>
               </div>
             </div>
           );
