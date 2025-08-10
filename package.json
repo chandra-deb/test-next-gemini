@@ -6,11 +6,13 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "transform-dictionary": "tsx scripts/transform-dictionary.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^2.0.3",
     "@ai-sdk/react": "^2.0.8",
+    "@google-cloud/translate": "^9.2.0",
     "@google/genai": "^1.13.0",
     "@radix-ui/react-scroll-area": "^1.2.9",
     "@radix-ui/react-separator": "^1.1.7",
@@ -18,6 +20,7 @@
     "ai": "^5.0.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "jieba-wasm": "^2.2.0",
     "lucide-react": "^0.539.0",
     "next": "15.4.6",
     "react": "19.1.0",
@@ -36,6 +39,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.4.6",
     "tailwindcss": "^4",
+    "tsx": "^4.20.3",
     "tw-animate-css": "^1.3.6",
     "typescript": "^5"
   }
