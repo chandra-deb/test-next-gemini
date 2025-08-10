@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { SubtitleItem } from "./types";
 import { formatTime } from "@/app/utils/formatTime";
 import { Button } from "@/components/ui/button";
+import { SegmentedSubtitle } from "./SegmentedSubtitle";
 
 export interface SubtitleListProps {
   subtitles: SubtitleItem[];
@@ -108,7 +109,9 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
                   {formatTime(subtitle.startTime)}
                 </Badge>
                 <div className={`text-sm leading-relaxed flex-1 ${active ? "text-slate-800 font-medium" : "text-slate-600"}`}>
-                  <p className="whitespace-pre-wrap break-words">{subtitle.text}</p>
+                  <p className="whitespace-pre-wrap break-words">
+                    <SegmentedSubtitle text={subtitle.text} />
+                  </p>
                   {(showPinyin && subtitle.pinyin) || (showMeaning && subtitle.meaning) ? (
                     <p className="text-[11px] mt-1 flex flex-wrap items-baseline gap-1">
                       {showPinyin && subtitle.pinyin && (
