@@ -40,17 +40,20 @@ export function SegmentedSubtitle({ text, className = "" }: SegmentedSubtitlePro
         return;
       }
 
+      console.log('🔤 Starting segmentation for text:', text);
       setIsSegmenting(true);
 
       try {
         const segmented = await jiebaService.segmentText(text);
+        console.log('🔤 Segmentation result:', segmented);
         if (!isCancelled) {
           setSegments(segmented);
         }
       } catch (error) {
-        console.error('Failed to segment text:', error);
+        console.error('🔤 Failed to segment text:', error);
         // Fallback to character-by-character for Chinese text
         if (!isCancelled) {
+          console.log('🔤 Using fallback character segmentation');
           setSegments(text.split(''));
         }
       } finally {
@@ -73,6 +76,8 @@ export function SegmentedSubtitle({ text, className = "" }: SegmentedSubtitlePro
       return <span>{text}</span>;
     }
 
+    console.log('🔤 Rendering segments:', segments);
+
     return segments.map((segment, index) => {
       const hasChineseChars = segment.split('').some(isChinese);
       
@@ -81,19 +86,23 @@ export function SegmentedSubtitle({ text, className = "" }: SegmentedSubtitlePro
         return <span key={index}>{segment}</span>;
       }
 
+      console.log('🔤 Creating hoverable segment:', segment);
       // Chinese text, make it hoverable
       return (
         <span
           key={index}
           className="hover:bg-blue-100 hover:bg-opacity-50 cursor-pointer rounded px-0.5 transition-colors duration-150"
-          onMouseEnter={(e) => handleMouseEnter(e, segment)}
+          onMouseEnter={(e) => {
+            console.log('🔤 Mouse enter on segment:', segment);
+            handleMouseEnter(e, segment);
+          }}
           onMouseLeave={handleMouseLeave}
         >
           {segment}
         </span>
       );
     });
-  }, [segments, isSegmenting, text, handleMouseEnter, handleMouseLeave]);
+  }, [segments, isSegmenting, text]);
 
   return (
     <>
