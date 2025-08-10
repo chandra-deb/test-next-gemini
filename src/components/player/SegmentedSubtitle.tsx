@@ -27,6 +27,8 @@ export function SegmentedSubtitle({ text, className = "" }: SegmentedSubtitlePro
     showTooltip,
     handleMouseEnter,
     handleMouseLeave,
+    handleTooltipMouseEnter,
+    handleTooltipMouseLeave,
     closeTooltip
   } = useHoverDictionary();
 
@@ -115,6 +117,8 @@ export function SegmentedSubtitle({ text, className = "" }: SegmentedSubtitlePro
           entries={tooltipEntries}
           isLoading={tooltipLoadingState === 'loading'}
           onClose={closeTooltip}
+          onMouseEnter={handleTooltipMouseEnter}
+          onMouseLeave={handleTooltipMouseLeave}
           position={tooltipPosition}
         />
       )}

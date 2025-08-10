@@ -15,6 +15,8 @@ interface UseHoverDictionaryReturn {
   showTooltip: boolean;
   handleMouseEnter: (event: React.MouseEvent, word: string) => Promise<void>;
   handleMouseLeave: () => void;
+  handleTooltipMouseEnter: () => void;
+  handleTooltipMouseLeave: () => void;
   closeTooltip: () => void;
 }
 
@@ -121,16 +123,33 @@ export function useHoverDictionary(): UseHoverDictionaryReturn {
   }, [dictionary, loadDictionary, showTooltip, lastHoveredWord]);
 
   const handleMouseLeave = useCallback(() => {
+    console.log('🖱️ Mouse leave from character');
     // Clear hover timeout if still pending
     if (hoverTimeoutRef.current) {
       clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = null;
     }
 
-    // Hide tooltip after a longer delay to allow moving to tooltip
+    // Hide tooltip after a delay to allow moving to tooltip
     hideTimeoutRef.current = setTimeout(() => {
+      console.log('🖱️ Delayed hide tooltip from character leave');
       closeTooltip();
-    }, 500); // Increased delay to make it less sensitive
+    }, 300);
+  }, [closeTooltip]);
+
+  const handleTooltipMouseEnter = useCallback(() => {
+    console.log('🖱️ Mouse enter tooltip');
+    // Clear any pending hide timeout when user enters tooltip
+    if (hideTimeoutRef.current) {
+      clearTimeout(hideTimeoutRef.current);
+      hideTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handleTooltipMouseLeave = useCallback(() => {
+    console.log('🖱️ Mouse leave tooltip');
+    // Close tooltip when user leaves the tooltip
+    closeTooltip();
   }, [closeTooltip]);
 
   return {
@@ -140,6 +159,8 @@ export function useHoverDictionary(): UseHoverDictionaryReturn {
     showTooltip,
     handleMouseEnter,
     handleMouseLeave,
+    handleTooltipMouseEnter,
+    handleTooltipMouseLeave,
     closeTooltip
   };
 }
